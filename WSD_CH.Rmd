@@ -1,0 +1,590 @@
+---
+title: "WSD_CH"
+output: html_document
+---
+
+Libraries:
+```{r}
+source("setup.R")
+```
+
+Functions:
+```{r}
+#Use park code to select park of interest
+get_select_parks <- function(park_code) {
+  all_parks <- getParkSystem()
+  all_parks %>%
+    filter(UNIT_CODE == park_code)
+}
+
+#buffer park of interest 
+get_aoi <- function(select_parks, buffer_dist) {
+  select_parks %>%
+    st_buffer(buffer_dist) %>%
+    summarize()
+}
+
+#get buildings for park of interest
+get_buildings <- function(parks, buffer_dist) {
+  getBuildings(park_boundary = parks %>%
+                 st_buffer(buffer_dist))
+}
+
+#select specific buildings by name and column name
+get_select_buildings <- function(buildings, bldg_name, column_name) {
+  buildings %>%
+    st_transform(crs = st_crs(4326)) %>%
+    filter(grepl(bldg_name, {{ column_name }}, ignore.case = TRUE)) %>%
+    mutate(centroid = st_centroid(geometry)) %>%
+  mutate(longitude = st_coordinates(centroid)[, 1],  
+         latitude = st_coordinates(centroid)[, 2]) %>%
+  select(longitude, latitude, everything())
+}
+
+#load csv data
+load_csv <- function(path, x, y, crs) {
+  data <- read_csv(path) %>%
+    drop_na(c(x, y)) %>%
+    st_as_sf(coords = c(x, y), crs = crs, remove = FALSE)
+}
+
+#transform coordinates to WGS 84
+transform_wgs84 <- function(sf) {
+    sf %>%
+    st_transform(crs = 4326) %>%
+      mutate(
+        longitude_wgs84 = st_coordinates(.)[, 1],
+        latitude_wgs84 = st_coordinates(.)[, 2])
+}
+
+#filter to aoi
+filter_aoi <- function(data) {
+  data %>%
+  st_filter(aoi %>%
+              st_transform(st_crs(data)))
+}
+```
+
+Create objects for select park, state, aoi, and buildings:
+```{r}
+park <- get_select_parks("INDU")
+
+aoi <- get_aoi(park, 1000)
+
+buildings <- get_buildings(park, 1000)
+ 
+select_buildings <- get_select_buildings(buildings, "dunbar", MAPLABEL)
+```
+
+Create maps:
+```{r}
+a <- mapview(park,
+             alpha.regions = 0.2,
+             col.regions = "green",
+             layer.name = "Park Boundary") +
+  mapview(aoi, 
+          alpha.regions = 0.25,
+          col.regions = "yellow",
+          layer.name = "AOI") +
+  mapview(buildings %>% st_centroid (),
+          col.regions = "lightpink",
+          layer.name = "Buildings") +
+  mapview(select_buildings %>% st_centroid(),
+          col.regions = "tomato",
+          cex = 8,
+          layer.name = "Select Buildings")
+
+b <- a + 
+  mapview(in_select_wells,
+          col.regions = "dodgerblue",
+           cex = 5,
+          layer.name = 'USGWD') +
+  mapview(in_select_wells_state,
+          col.regions = "purple",
+          cex = 5,
+          layer.name = "State Wells") #+
+  # mapview(va_select_springs,
+  #         col.regions = "orange",
+  #         cex = 5,
+  #         layer.name = "Springs") #+
+  # # mapview(nj_historic_point,
+  #               col.regions = "hotpink",
+  #               layer.name = "Building") #+
+  # # mapview(northampton_select_wells,
+  #         col.regions = "red",
+  #         layer.name = "Northampton Wells") +
+  # mapview(pike_select_wells,
+  #         col.regions = "red",
+  #         layer.name = "Pike Wells") +
+  # mapview(monroe_select_wells,
+  #         col.regions = "mediumseagreen",
+  #         layer.name = "Monroe Wells") +
+  # mapview(pa_select_wells,
+  #         col.regions = "cyan",
+  #         layer.name = "USGWD PA")
+b
+```
+
+Indiana - read and select data:
+```{r}
+in_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Indiana.csv", "Longitude", "Latitude", crs = 4269)
+in_wells <- transform_wgs84(in_wells)
+in_select_wells <- filter_aoi(in_wells)
+
+in_wells_state <- st_read("data/Water_Supply_Systems/data_sources/Indiana/Water_Wells/IDNR_Water_Well_Locations.shp")
+in_wells_state <- transform_wgs84(in_wells_state)
+in_select_wells_state <- filter_aoi(in_wells_state)
+```
+
+
+Kansas - read and select data:
+```{r}
+ks_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Kansas.csv", "Longitude", "Latitude", crs = 4269)
+ks_wells <- transform_wgs84(ks_wells)
+ks_select_wells <- filter_aoi(ks_wells)
+
+ks_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Kansas/wwc5_wells_full.txt", "LONGITUDE", "LATITUDE", crs = 4269)
+ks_wells_state <- transform_wgs84(ks_wells_state)
+ks_select_wells_state <- filter_aoi(ks_wells_state) #%>%
+  #dplyr::filter(grepl("Nicodemus", OWNER, ignore.case = TRUE)) #optional filter
+```
+
+
+Iowa - read and select data:
+```{r}
+ia_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Iowa.csv", "Longitude", "Latitude", crs = 4269)
+ia_wells <- transform_wgs84(ia_wells)
+ia_select_wells <- filter_aoi(ia_wells)
+
+ia_wells_state <- read_csv("data/Water_Supply_Systems/data_sources/Iowa/State_of_Iowa_Registered_Wells.csv")
+ia_wells_state <- st_as_sf(ia_wells_state, wkt = "the_geom", crs = 4326)
+ia_wells_state <- transform_wgs84(ia_wells_state)
+ia_select_wells_state <- filter_aoi(ia_wells_state)
+```
+
+Nebraska - read and select data:
+```{r}
+ne_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Nebraska.csv", "Longitude", "Latitude", crs = 4269)
+ne_wells <- transform_wgs84(ne_wells)
+ne_select_wells <- filter_aoi(ne_wells)
+
+ne_wells_state <- st_read("data/Water_Supply_Systems/data_sources/Nebraska/Groundwater_Wells_DNR/Groundwater_Wells_DNR.shp")
+ne_wells_state <- transform_wgs84(ne_wells_state)
+ne_select_wells_state <- filter_aoi(ne_wells_state)
+```
+
+
+Michigan - read and select data:
+```{r}
+mi_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Michigan.csv", "Longitude", "Latitude", crs = 4269)
+mi_wells <- transform_wgs84(mi_wells)
+mi_select_wells <- filter_aoi(mi_wells)
+
+mi_wells_state <- st_read("data/Water_Supply_Systems/data_sources/Michigan/state_wells/Michigan_Wellogic_Wells.shp")
+mi_wells_state <- transform_wgs84(mi_wells_state)
+mi_select_wells_state <- filter_aoi(mi_wells_state)
+```
+
+Alabama - read and select data:
+```{r}
+al_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Alabama.csv", "Longitude", "Latitude", crs = 4269)
+al_wells <- transform_wgs84(al_wells)
+al_select_wells <- filter_aoi(al_wells)
+
+al_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Alabama/Water_Wells.csv", "Longitude27", "Latitude27", crs = 4326)
+```
+
+Delaware - read and select data:
+```{r}
+de_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Delaware.csv", "Longitude", "Latitude", crs = 4269)
+de_wells <- transform_wgs84(de_wells)
+de_select_wells <- filter_aoi(de_wells)
+
+de_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Delaware/Wells.csv", "x", "y", crs = 3857)
+de_wells_state <- transform_wgs84(de_wells_state)
+de_select_wells_state <- filter_aoi(de_wells_state)
+```
+
+Florida - read and select data:
+```{r}
+fl_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Florida.csv", "Longitude", "Latitude", crs = 4269)
+fl_wells <- transform_wgs84(fl_wells)
+fl_select_wells <- filter_aoi(fl_wells)
+
+fl_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Florida/SWF_wells.csv", "XCOORD", "YCOORD", crs = 2236)
+fl_wells_state <- transform_wgs84(fl_wells_state)
+fl_select_wells_state <- filter_aoi(fl_wells_state)
+  #dplyr::filter(grepl("name", column_name, ignore.case = TRUE)) #optional filter
+  
+fl_pws <- load_csv("data/Water_Supply_Systems/data_sources/Florida/PWS_non_federal.csv", "X", "Y", crs = 6439)
+fl_pws <- transform_wgs84(fl_pws)
+fl_select_pws <- filter_aoi(fl_pws)
+  #dplyr::filter(grepl("name", column_name, ignore.case = TRUE)) #optional filter
+```
+
+Georgia
+```{r}
+ga_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Georgia.csv", "Longitude", "Latitude", crs = 4269)
+ga_wells <- transform_wgs84(ga_wells)
+ga_select_wells <- filter_aoi(ga_wells)
+```
+
+Kentucky
+```{r}
+ky_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Kentucky.csv", "Longitude", "Latitude", crs = 4269) 
+ky_wells <- transform_wgs84(ky_wells)
+ky_select_wells <- filter_aoi(ky_wells)
+
+ky_wells_state <- read_excel("data/Water_Supply_Systems/data_sources/Kentucky/KY_WaterWellData_01.17.2023.xlsx") 
+ky_wells_state <- ky_wells_state %>%
+  drop_na(c(LongDecimal, LatDecimal)) %>%
+  st_as_sf(coords = c("LongDecimal", "LatDecimal"), crs = 4326, remove = FALSE)
+ky_wells_state <- transform_wgs84(ky_wells_state)
+ky_select_wells_state <- filter_aoi(ky_wells_state)
+```
+
+Maine - read and select data:
+```{r}
+me_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Maine.csv", "Longitude", "Latitude", crs = 4269)
+me_wells <- transform_wgs84(me_wells)
+me_select_wells <- filter_aoi(me_wells)
+
+me_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Maine/ME_Wells.csv", "Longitude", "Latitude", crs = 4326)
+me_select_wells_state <- filter_aoi(me_wells_state)
+
+#ACAD small scale GIS
+acad_wqgis_path <- "data/Water_Supply_Systems/data_sources/Maine/acad_wqgis"
+acad_layers <- st_layers(acad_wqgis_path)
+acad_dg <- st_read(acad_wqgis_path, layer = "idg_station", crs = 26719)
+acad_wq <- st_read(acad_wqgis_path, layer = "wq_station", crs = 26719)
+mapview(acad_dg) + mapview(acad_wq)
+```
+
+Maryland - read and select data:
+```{r}
+md_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Maryland.csv", "Longitude", "Latitude", crs = 4269)
+md_wells <- transform_wgs84(md_wells)
+md_select_wells <- filter_aoi(md_wells)
+
+#ASIS small scale GIS
+asis_wqgis_path <- "data/Water_Supply_Systems/data_sources/Maryland/ASIS"
+asis_layers <- st_layers(asis_wqgis_path)
+asis_dg <- st_read(asis_wqgis_path, layer = "idg_station", crs = 26918)
+asis_map <- mapview(asis_dg)
+```
+
+Massachusetts - read and select data:
+```{r}
+ma_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Massachusetts.csv", "Longitude", "Latitude", crs = 4269)
+ma_wells <- transform_wgs84(ma_wells)
+ma_select_wells <- filter_aoi(ma_wells)
+
+ma_pws_path <- "data/Water_supply_Systems/data_sources/Massachusetts/MA_PWS"
+ma_pws <- st_read(ma_pws_path)
+ma_pws <- transform_wgs84(ma_pws)
+ma_select_pws <- filter_aoi(ma_pws)
+
+ma_historic_path <- "data/Water_Supply_Systems/data_sources/Massachusetts/ma_historic_places"
+ma_historic_places <- st_read(ma_historic_path)
+ma_historic_places <- transform_wgs84(ma_historic_places)
+ma_select_places <- filter_aoi(ma_historic_places)
+
+pws_point <- ma_pws %>%
+  filter(grepl("4318083", PWS_ID, ignore.case = TRUE))
+
+historic_building <- ma_select_places %>%
+  filter(grepl("ryerson", COMMON_NAM, ignore.case = TRUE) | grepl("ryerson", HISTORIC_N, ignore.case = TRUE))
+```
+
+Mississippi - read and select data:
+```{r}
+ms_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Mississippi.csv", "Longitude", "Latitude", crs = 4269)
+ms_wells <- transform_wgs84(ms_wells)
+ms_select_wells <- filter_aoi(ms_wells)
+
+ms_wells_state <- read_sf("data/Water_Supply_Systems/data_sources/Mississippi/DEQ_Wells_24/MS_WaterWells_Nov2024.shp")
+ms_wells_state <- transform_wgs84(ms_wells_state)
+ms_select_wells_state <- filter_aoi(ms_wells_state) 
+
+ms_wells_state_2 <- read_sf("data/Water_Supply_Systems/data_sources/Mississippi/DEQ_Wells_09/MS_OLWRPermittedWells_2009.shp")
+ms_wells_state_2 <- transform_wgs84(ms_wells_state_2)
+ms_select_wells_state_2 <- filter_aoi(ms_wells_state_2) #%>%
+    #dplyr::filter(grepl("little mountain", PWS_NAME, ignore.case = TRUE)) #optional filter
+```
+
+New Hampshire - read and select data:
+```{r}
+nh_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_New_Hampshire.csv", "Longitude", "Latitude", crs = 4269)
+nh_wells <- transform_wgs84(nh_wells)
+nh_select_wells <- filter_aoi(nh_wells)
+```
+
+New Jersey - read and select data:
+```{r}
+nj_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_New_Jersey.csv", "Longitude", "Latitude", crs = 4269)
+nj_wells <- transform_wgs84(nj_wells)
+nj_select_wells <- filter_aoi(nj_wells)
+
+#DEWA small scale GIS
+dewa_wqgis_path <- "data/Water_Supply_Systems/data_sources/New_Jersey/dewa"
+dewa_layers <- st_layers(dewa_wqgis_path)
+dewa_idg <- st_read(dewa_wqgis_path, layer = "idg_station", crs = 26718)
+
+#DEWA structures
+dewa_structures <- st_read("data/Water_Supply_Systems/data_sources/New_Jersey/structures")
+
+#Historic Buildings Geodatabase
+gdb <- "data/Water_Supply_Systems/data_sources/New_Jersey/Land_use_HPO_property.gdb/"
+layers <- st_layers(gdb)
+
+sf_obj_all <- st_read(gdb, layer = layers$name[1], crs = 3424) %>%
+  st_drop_geometry() 
+
+sf_obj <- sf_obj_all %>%
+  drop_na(X_COORD, Y_COORD) %>%
+  st_as_sf(coords = c("X_COORD","Y_COORD"), crs = 3424)
+
+sf_obj <- transform_wgs84(sf_obj) 
+
+nj_select_historic <- filter_aoi(sf_obj)
+
+nj_historic_point <- nj_select_historic %>%
+  dplyr::filter(grepl("morr", NAME, ignore.case = TRUE) | grepl("pump", ALT_NAME, ignore.case = TRUE) | grepl("pump", ADDRESS, ignore.case = TRUE)) %>%
+  select(-(STATUS:NOTES))
+```
+
+New York - read and select data:
+```{r}
+ny_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_New_York.csv", "Longitude", "Latitude", crs = 4269)
+ny_wells <- transform_wgs84(ny_wells)
+ny_select_wells <- filter_aoi(ny_wells)
+
+ny_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/New_York/wellspublic.csv", "Surface_Longitude", "Surface_latitude", crs = 4269)
+ny_wells_state <- transform_wgs84(ny_wells_state)
+ny_select_wells_state <- filter_aoi(ny_wells_state)
+```
+
+North Carolina - read and select data:
+```{r}
+nc_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_North_Carolina.csv", "Longitude", "Latitude", crs = 4269)
+nc_wells <- transform_wgs84(nc_wells)
+nc_select_wells <- filter_aoi(nc_wells)
+
+nc_pws <- load_csv("data/Water_Supply_Systems/data_sources/North_Carolina/Public_Water_Supply_Water_Sources.csv", "X", "Y", crs = 32119)
+nc_pws <- transform_wgs84(nc_pws)
+nc_select_pws <- filter_aoi(nc_pws)
+  #dplyr::filter(grepl("name", column_name, ignore.case = TRUE)) #optional filter
+```
+
+Pennsylvania - read and select data:
+```{r}
+pa_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Pennsylvania.csv", "Longitude", "Latitude", crs = 4269)
+pa_wells <- transform_wgs84(pa_wells)
+pa_select_wells <- filter_aoi(pa_wells)
+
+#Wells by county
+# monroe_co_wells <- load_csv("data/Water_Supply_Systems/data_sources/Pennsylvania/Monroe.csv", "Longitude (DD)", "Latitude (DD)", crs = 4326)
+# monroe_select_wells <- filter_aoi(monroe_co_wells) %>%
+#    filter(grepl("DWGNRA", `Original Owner`, ignore.case = TRUE) | grepl("Milford", `Original Owner`, ignore.case = TRUE))
+# 
+# pike_co_wells <- load_csv("data/Water_Supply_Systems/data_sources/Pennsylvania/Pike.csv", "Longitude (DD)", "Latitude (DD)", crs = 4326)
+# pike_select_wells <- filter_aoi(pike_co_wells) %>%
+#    filter(grepl("dwgnra", `Original Owner`, ignore.case = TRUE) | grepl("dwgnra", `Original Owner`, ignore.case = TRUE))
+# 
+# northampton_co_wells <- load_csv("data/Water_Supply_Systems/data_sources/Pennsylvania/Northampton.csv", "Longitude (DD)", "Latitude (DD)", crs = 4326)
+# northampton_select_wells <- filter_aoi(northampton_co_wells) %>%
+#   filter(grepl("DWGNRA", `Original Owner`, ignore.case = TRUE) | grepl("NPS", `Original Owner`, ignore.case = TRUE) | grepl("usgs", `Original Owner`, ignore.case = TRUE))
+
+pa_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Pennsylvania/GeneralInformation.csv", "Longitude (DD)", "Latitude (DD)", crs = 4326)
+pa_select_wells_state <- filter_aoi(pa_wells_state) #%>%
+   #filter(grepl("DWGNRA", `Original Owner`, ignore.case = TRUE) | grepl("", `Original Owner`, ignore.case = TRUE))
+
+```
+
+South Carolina - read and select data:
+```{r}
+sc_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_South_Carolina.csv", "Longitude", "Latitude", crs = 4269)
+sc_wells <- transform_wgs84(sc_wells)
+sc_select_wells <- filter_aoi(sc_wells)
+  
+sc_pws <- load_csv("data/Water_Supply_Systems/data_sources/South_Carolina/SC_PWS.csv", "x", "y", crs = 26917)
+sc_pws <- transform_wgs84(sc_pws)
+sc_select_pws <- filter_aoi(sc_pws)
+  #dplyr::filter(grepl("name", column_name, ignore.case = TRUE)) #optional filter
+```
+
+Tennessee - read and select data:
+```{r}
+tn_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Tennessee.csv", "Longitude", "Latitude", crs = 4269)
+tn_wells <- tranform_wgs(tn_wells)
+tn_select_wells <- filter_aoi(tn_wells)
+
+tn_wells_state <- load_csv("data/Water_Supply_Systems/data_sources/Tennessee/Water_Wells.csv", "X", "Y", crs = 4326)
+tn_select_wells_state <- filter_aoi(tn_wells_state)
+  #dplyr::filter(grepl("name", column_name, ignore.case = TRUE)) #optional filter
+```
+
+Vermont - read and select data:
+```{r}
+vt_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Vermont.csv", "Longitude", "Latitude", crs = 4269)
+vt_wells <- transform_wgs84(vt_wells)
+vt_select_wells <- filter_aoi(vt_wells)
+```
+
+Virginia - read and select data:
+```{r}
+va_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Virginia.csv", "Longitude", "Latitude", crs = 4269)
+va_wells <- transform_wgs84(va_wells)
+va_select_wells <- filter_aoi(va_wells)
+
+va_wells_state <- read_sf("data/Water_Supply_Systems/data_sources/Virginia/Virginia_wells/Virginia_wells.shp")
+va_wells_state <- transform_wgs84(va_wells_state)
+va_select_wells_state <- filter_aoi(va_wells_state)
+
+va_springs <- st_read("data/Water_Supply_Systems/data_sources/Virginia/EXTERNAL_Spring_Geodatabase_02-06-2023/VDEQ_Spring_Database_02-06-2023.gdb", layer = "VDEQ_Spring_SITES")
+va_springs <- transform_wgs84(va_springs)
+va_select_springs <- filter_aoi(va_springs)
+```
+
+West Virginia - read and select data:
+```{r}
+wv_wells <- load_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_West_Virginia.csv", "Longitude", "Latitude", crs = 4269)
+wv_wells <- transform_wgs84(wv_wells)
+wv_select_wells <- filter_aoi(wv_wells)
+```
+
+
+Import Water Supply Database
+```{r}
+table_path <- "data/Water_Supply_Systems/NPS_Water_Systems_Database_Joined.xlsx" 
+
+source_table <- read_excel(table_path, sheet = 1, na = "NA", skip = 1) 
+
+source_table <- source_table %>%
+  mutate(
+    source_longitude = as.numeric(trimws(as.character(source_longitude))),
+    source_latitude = as.numeric(trimws(as.character(source_latitude)))
+  ) %>%
+  filter(!is.na(source_longitude) & !is.na(source_latitude))
+
+source_table_locs <- st_as_sf(
+  source_table,
+  coords = c("source_longitude", "source_latitude"),
+  crs = 4326,
+  remove = FALSE
+) 
+
+
+select_source_region <- source_table_locs %>%
+  dplyr::filter(region == "Northeast Region")
+
+select_source_state <- source_table_locs %>%
+  dplyr::filter(state == "VT") 
+
+c <-mapview(select_source_region,
+                 col.regions = "hotpink",
+                 layer.name = "Water Sources")
+
+d <- mapview(select_source_state,
+             col.regions = "hotpink",
+             cex = 9,
+             layer.name = "Water Sources")
+
+parks_state <- getParkSystem() %>%
+  filter(STATE == "WV")
+
+e <- d + mapview(parks_state) 
+
+e <- mapview(vt_select_wells) + mapview(select_source_state,
+                 col.regions = "hotpink",
+                 layer.name = "Water Sources")
+
+c
+```
+
+View and Tidy WSD
+```{r}
+# look at what is in the columns
+## glimpse()
+select_source_region %>%
+  glimpse()
+## slice()
+select_source_region %>%
+  slice()
+## head()
+select_source_region %>%
+  head()
+
+# remove sources that are not in use
+active_NER <- select_source_region %>%
+  filter(in_use == "Yes")
+
+# map by system_type
+mapview(
+  select_source_region,
+  zcol = "system_type",
+  label = paste("System Type:", active_NER$system_type, "<br>",
+                "Source Type:", active_NER$source_type))
+
+# map by source_state
+mapview(
+  select_source_region,
+  zcol = "source_state")
+
+# map by source_type
+mapview(
+  select_source_region,
+  zcol = "source_type")
+
+# map by source_location_refs
+mapview(
+  select_source_region,
+  zcol = "source_location_refs")
+
+select_source_region$source_location_refs <- sub(",.*", "", select_source_region$source_location_refs)
+
+mapview(
+  select_source_region,
+  zcol = "source_location_refs")
+
+# map by use_category
+mapview(
+  select_source_region,
+  zcol = "use_category")
+```
+
+View Park Maps
+```{r}
+library("leaflet")
+# NPS Park Tiles for map background:
+tileURL  <- "https://atlas-stg.geoplatform.gov/styles/v1/atlas-user/ck58pyquo009v01p99xebegr9/tiles/256/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiYXRsYXMtdXNlciIsImEiOiJjazFmdGx2bjQwMDAwMG5wZmYwbmJwbmE2In0.lWXK2UexpXuyVitesLdwUg&"
+tile_attribution <- '"NPS"'
+
+pt <- st_centroid(aoi) %>%
+  st_coordinates()
+
+bounds <- st_bbox(aoi %>% st_buffer(5000))
+
+test_map <- leaflet::leaflet() %>%
+  leaflet::addTiles(urlTemplate = tileURL) %>%
+  leaflet::setView(lat = pt[2], pt[1], zoom = 12) %>%
+  #leaflet::fitBounds(lng1 = west, lat1 = south, lng2 = east, lat2 = north) %>%
+
+  addScaleBar(position = c("bottomright"),
+              options = scaleBarOptions(updateWhenIdle = FALSE))# %>%
+  # addPolygons(data = alluvium, # Use addPolygons() for polygons
+  #            color = "yellow", # Set the border color
+  #            weight = 2, # Set the border weight
+  #            fillColor = "yellow", # Set the fill color
+  #            fillOpacity = 0.3) %>% # Set the fill opacity) %>%
+  #addCircleMarkers(data = proposed_well,  # Use addMarkers() for standard markers
+  #           lng = st_coordinates(proposed_well)[1], # Extract longitude
+  #           lat = st_coordinates(proposed_well)[2],
+  #           color = "black",
+  #           radius = 5,
+  #           fillOpacity = 1) %>%
+  # addLegend("topright", colors = c("black", "yellow"), labels = c("Proposed Well", "Valle Grande"))
+
+test_map
+```
+
