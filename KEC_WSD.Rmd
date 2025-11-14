@@ -1,0 +1,109 @@
+---
+title: "WSD_KEC"
+author: "KEC"
+date: "2025-09-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+source("setup.R")
+```
+
+# get park boundary and set search aoi for other layers
+
+```{r park_boundary}
+
+park <- "YOSE"
+
+pb <- getParkBoundary(park) %>%
+  st_transform(4326)
+
+aoi <- pb %>%
+  st_buffer(5000) 
+
+bldg_all <- getBuildings(park_boundary = pb) 
+
+st <- tigris::states() %>%
+  dplyr::filter(STUSPS %in% pb$STATE)
+
+mapview(aoi, col.regions = "yellow", alpha.regions = 0.3) +
+  mapview(pb, col.regions = "seagreen") +
+  mapview(bldg_all %>% st_centroid(), col.regions = "tomato")
+
+
+
+
+```
+
+
+# little script to quickly search buildings for a given park
+
+```{r search_buildings}
+
+search_str <- "maint"
+
+bldg <- bldg_all %>% 
+  dplyr::select(BLDGNAME, BLDGALTNAM, MAPLABEL, BLDGSTATUS, BLDGTYPE, FACOWNER, FACOCCUPAN, FACMAINTAI, FACUSE, SEASONAL, UNITCODE, UNITNAME) %>%
+  st_transform(4326) %>% # transform to WGS 84 and add coordinates to bldg
+  st_centroid() %>%
+  dplyr::mutate(
+    # The st_coordinates output is a matrix, so we access columns by index
+    X = sf::st_coordinates(.)[, 1],
+    Y = sf::st_coordinates(.)[, 2]
+  ) 
+
+sel_bldg <- bldg %>% 
+          dplyr::filter((grepl(search_str, MAPLABEL, ignore.case = TRUE) |
+                        grepl(search_str, BLDGNAME, ignore.case = TRUE)))
+
+mapview(sel_bldg, layer.name = "select_buildings") +
+  mapview(pb)
+
+
+```
+
+
+
+# Load well data for park
+
+```{r}
+
+
+usgwd <- load_csv(paste0("data/all/Water_Supply/USGWD-Tabular/USGWD_", st$NAME,".csv"), "Longitude", "Latitude", crs = 4269) %>%
+             add_wgs_coords() %>%
+  st_filter(aoi)
+
+
+# FILE PATHS FOR THESE NEXT FEW DATASETS WILL NEED TO BE UPDATED for each STATE
+wells <- read_csv("data/Water_Supply_Systems/data_sources/California/yosemite_wells.csv") %>%
+  clean_names() %>%
+  st_as_sf(coords = c("decimal_longitude", "decimal_latitude"), crs = 4326) %>%
+            add_wgs_coords() %>%
+  st_filter(aoi)
+
+#layers <- st_layers("data/Water_Supply_Systems/data_sources/California/eWRIMS_Data.gdb")
+pods <- st_read("data/Water_Supply_Systems/data_sources/California/eWRIMS_Data.gdb", layer = "Points_of_Diversion_20250701", crs = 3310) %>% 
+  add_wgs_coords() %>%
+  st_transform(crs = st_crs(aoi)) %>%
+  st_filter(aoi)
+
+pws_boundaries <- st_read("data/Water_Supply_Systems/data_sources/California/California_Drinking_Water_System_Area_Boundaries/California_Drinking_Water_System_Area_Boundaries.shp") %>% 
+  st_make_valid() %>%
+  st_transform(crs = st_crs(aoi)) %>%
+  st_filter(aoi)
+
+```
+
+
+
+# Plot all
+```{r}
+
+mapview(pb, col.regions = "seagreen", alpha.regions = 0.2) +
+mapview(pods, col.regions = "darkblue", cex = 5) +
+mapview(usgwd, col.regions = "dodgerblue", cex = 3) +
+ mapview(bldg, col.regions = "gray", cex = 3) +
+  mapview(sel_bldg, col.regions = "yellow", cex = 7) +
+  mapview(pws_boundaries, col.regions = "tomato")
+
+```
