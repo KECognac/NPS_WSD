@@ -1,3 +1,5 @@
+# setup script for processing functions
+
 #Install (if necessary) and load all required packages ----------------
 
 packageLoad <-
@@ -12,58 +14,85 @@ packageLoad <-
 
 # vector of packages to load
 packages <- c(
-  'sf',
-  'httr',
-  'jsonlite',
-  'nhdplusTools',
-  #'rnoaa',
-  "mapview",
-  "ggpubr",
-  "kableExtra",
-  "plotly",
-  "DT",
-  "igraph",
-  "nngeo",
-  "dataRetrieval",
-  "tigris",
-  "data.table",
-  "terra",
-  "stars",
-  "remotes",
-  'devtools',
-  'ggfortify',
-  'ggrepel',
-  "stars",
-  "ggforce",
-  "janitor",
-  "rvest",
-  "lwgeom",
-  "zoo",
-  "gridExtra",
-  "akima",
-  "RCurl",
-  "geojsonsf",
-  "scales",
-  "tmap", 
-  "maptiles",
-  "flextable", 
-  "ggseas",
-  "furrr",
+  #"akima",
   "arcgisutils",
-  "readxl",
-  "SPEI",
-  "elevatr",
+  #"cowplot",
+  "data.table",
+  "dataRetrieval",
+  "devtools",
   "dtplyr",
-  "cowplot",
-  "padr",
-  "units",
+  "elevatr",
+  "flextable",
+  "furrr",
+  "geojsonsf",
+  "geosphere",
+  "ggforce",
+  "ggfortify",
+  "ggpubr",
+  "ggrepel",
+  "ggseas",
+  "ggthemes",
+  "gridExtra",
+  "httr",
+  "igraph",
+  "janitor",
+  "jsonlite",
+  "kableExtra",
+  "knitr",
   "leafem",
-  "geosphere"
+  "lwgeom",
+  "maptiles",
+  "mapview",
+  "Metrics",
+  "nhdplusTools",
+  "nngeo",
+  "padr",
+  "patchwork",
+  "plotly",
+  "progress",
+  "RColorBrewer",
+  "RCurl",
+  "readxl",
+  "remotes",
+  "rvest",
+  "scales",
+  "sf",
+  #"SPEI",
+  "stars",
+  "terra",
+  "tigris",
+  #"tmap",
+  "units",
+  "viridis",
+  "zoo"
 )
 
 packages <- c(packages, "tidyverse")
 
+
 packageLoad(packages)
+
+## GitHub package installs ----------------
+
+# suggested install of github version for climateR
+# remotes::install_github("mikejohnson51/AOI") # suggested! But I don't think we need it..
+#if (!"climateR" %in% installed.packages()) {
+#  remotes::install_github("mikejohnson51/climateR")
+#}
+#library(climateR)
+
+
+# suggested install of Rnoaa - 
+#if (!"rnoaa" %in% installed.packages()) {
+#  remotes::install_github("ropensci/rnoaa.git")
+#}
+#library(rnoaa)
+
+
+# if (!"cft" %in% installed.packages()) {
+#   devtools::install_github("earthlab/cft")
+# }
+# library(cft)
 
 # source all functions --------------------------
 
