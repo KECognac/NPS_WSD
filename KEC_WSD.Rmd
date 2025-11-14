@@ -94,6 +94,36 @@ pws_boundaries <- st_read("data/Water_Supply_Systems/data_sources/California/Cal
 
 ```
 
+READ IN WSD
+
+```{r wsd}
+
+# May need to update this
+db_path <- "/Users/kcognac/Library/CloudStorage/OneDrive-SharedLibraries-Colostate/WCNR NPS-CSU-DRI - Documents/Water for People (WFP)/data/Water_Supply_Systems/NPS_Water_Systems_Database_Joined_OHIO_DOUG.xlsx"
+
+source_table <- read_excel(db_path, sheet = 1, na = c("U","NA"), skip = 1) 
+
+# Create copy of source table as sf_object (i.e., with geospatial attributes). 
+# During this process, it is required that rows without location data are
+# dropped. Circle back to this later.
+source_table_geo <- source_table %>%
+  dplyr::mutate(source_longitude = as.numeric(source_longitude),
+                source_latitude = as.numeric(source_latitude)) %>%
+  drop_na("source_longitude","source_latitude") %>%
+  st_as_sf(., 
+           coords = (c("source_longitude","source_latitude")), 
+           crs = 4326,
+           remove = FALSE) 
+
+select_sources <- source_table_geo %>%
+  dplyr::filter(park_unit %in% pb$UNIT_CODE) 
+
+
+mapview(select_sources)
+
+
+```
+
 
 
 # Plot all
@@ -104,6 +134,11 @@ mapview(pods, col.regions = "darkblue", cex = 5) +
 mapview(usgwd, col.regions = "dodgerblue", cex = 3) +
  mapview(bldg, col.regions = "gray", cex = 3) +
   mapview(sel_bldg, col.regions = "yellow", cex = 7) +
-  mapview(pws_boundaries, col.regions = "tomato")
+  mapview(pws_boundaries, col.regions = "tomato") +
+  mapview(select_sources, col.regions = "hotpink", layer.name = "NPS WSD SO FAR")
 
 ```
+
+
+
+
