@@ -1,0 +1,391 @@
+---
+title: "Explore_Water_Supply_Database"
+author: "KEC"
+date: "2025-01-22"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+source("setup.R")
+```
+
+
+First, import some basic NPS information.
+
+```{r}
+
+park_of_interest <- "BRCA"
+
+all_parks <- getParkSystem()
+
+# Select specific parks for analysis using filter
+select_parks <- all_parks %>%
+  dplyr::filter(UNIT_CODE == park_of_interest)
+
+state <- select_parks$STATE %>% unique()
+
+#Get buildings within 5000m (5km) buffer of select parks
+buildings <- getBuildings(park_boundary = select_parks %>%
+                            st_buffer(15000))
+
+#Optional: filter for specific buildings
+select_buildings <- buildings %>%
+  st_transform(crs = st_crs(4326)) %>%
+  dplyr::filter(grepl("LFAL MP 317.5 B449 Pump House - Linville Falls Qtr./W35", BLDGNAME, ignore.case = TRUE)) %>%
+  mutate(centroid = st_centroid(geometry)) %>%
+  mutate(longitude = st_coordinates(centroid)[, 1],  
+         latitude = st_coordinates(centroid)[, 2]) %>%
+  select(longitude, latitude, everything())
+
+aoi <- select_parks %>%
+  st_buffer(10000) %>%
+  dplyr::summarize()
+
+
+```
+
+Coordinates of select buildings:
+```{r}
+coords <- select_buildings %>%
+  st_centroid() %>%
+  st_coordinates() 
+```
+
+Now, plot select park and buildings. 
+
+```{r}
+
+a <-
+  mapview(select_parks,
+        alpha.regions = 0.2,
+        col.regions = "seagreen",
+        layer.name = "Park Boundary") +
+  mapview(buildings %>% st_centroid(),
+        col.regions = "lightpink",
+        layer.name = "Buildings") +
+  # mapview(select_buildings %>% st_centroid(),
+  #         col.regions = "tomato",
+  #         layer.name = "Select Buildings",
+  #         cex = 8) +
+  mapview(aoi,
+          layer.name = "Search Area",
+          alpha.regions = 0.25,
+          col.regions = "yellow")
+a 
+
+```
+
+
+Now import the Water Supply Database
+
+You will likely need to modify the table path with the location of the database on your system -- unless a symlink has been created in the project folder. To add a symlink, open the terminal tab below and type:
+
+ln -s “directory_you_want_to_link” “directory_where_link_will_live”
+
+KEC: For me, this would be:
+ln -s "/Users/kcognac/Library/CloudStorage/OneDrive-SharedLibraries-Colostate/Willi,Katie - nps_water_vulnerability/data" "/Users/kcognac/Desktop/Repositories/NPS_WSD"
+
+
+```{r}
+#table_path <- "data/Water_Supply_Systems/NPS_Water_Systems_Database.xlsx"
+table_path <- "data/Water_Supply_Systems/NPS_Water_Systems_Database_Joined.xlsx" 
+
+
+source_table <- read_excel(table_path, sheet = 1, na = "NA", skip = 1) 
+
+# Create copy of source table as sf_object (i.e., with geospatial attributes). 
+# During this process, it is required that rows without location data are
+# dropped. Circle back to this later.
+source_table_locs <- source_table %>%
+  drop_na("source_longitude","source_latitude") %>%
+  st_as_sf(., 
+           coords = (c("source_longitude","source_latitude")), 
+           crs = 4326,
+           remove = FALSE) 
+
+select_sources <- source_table_locs %>%
+  dplyr::filter(park_unit %in% select_parks$UNIT_CODE) #%>%
+  # dplyr::filter(grepl("kolob", water_system_name, ignore.case = TRUE))
+
+b <- a + mapview(select_sources,
+                 col.regions = "orange",
+                 layer.name = "Water Sources")
+
+b
+        
+```
+
+
+Depending on the state, import well data
+```{r}
+
+if (state == "UT") {
+
+  wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Utah.csv") %>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326, #WGS84
+           remove = FALSE) 
+  
+  pods <- read_csv("data/Water_Supply_Systems/data_sources/Utah/Utah_Points_of_Diversion_20250123.csv") %>%
+    st_as_sf(coords = (c("X","Y")),
+           crs =  26912, #NAD83
+           remove = FALSE) %>%
+  st_transform(crs = st_crs(4326))%>%
+  mutate(longitude = st_coordinates(.)[, 1], # Extract longitude
+         latitude = st_coordinates(.)[, 2])   # Extract latitude
+
+  pws <- read.csv("data/Water_Supply_Systems/data_sources/Utah/Utah_PWS_20250219.csv") %>%
+    drop_na(c("x","y")) %>%
+    st_as_sf(.,
+             coords = (c("x","y")), 
+             crs =  4269, #NAD83
+             remove = FALSE) %>%
+  st_transform(crs = st_crs(4326))  
+  
+ } else if (state == "NC") {
+   
+  wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_North_Carolina.csv")%>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+  
+  pws <- read_csv("data/Water_Supply_Systems/data_sources/North_Carolina/Public_Water_Supply_Water_Sources.csv") %>%
+    drop_na(c("X","Y")) %>%
+    st_as_sf(.,
+             coords = (c("X","Y")), 
+             crs =  32119, #NAD83
+             remove = FALSE) %>%
+  st_transform(crs = st_crs(4326)) %>%
+    mutate(longitude = st_coordinates(.)[, 1], 
+           latitude = st_coordinates(.)[, 2])   
+  
+ } else if (state == "TN") {
+   
+  wells <- read_csv("data/Water_Supply_Systems/data_sources/Tennessee/Water_Wells.csv")%>%
+  drop_na(c("X","Y")) %>%
+  st_as_sf(., 
+           coords = (c("X","Y")), 
+           crs = 4326,
+           remove = FALSE)
+  
+  } else if (state == "VA") {
+   
+  wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Virginia.csv")%>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+  
+  } else if (state == "FL") {
+   
+  wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Florida.csv") %>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+  
+  wells2 <- read_csv("data/Water_Supply_Systems/data_sources/Florida/SWF_wells.csv") %>%
+    drop_na(c("XCOORD", "YCOORD")) %>%
+    st_as_sf(.,
+             coords = (c("XCOORD", "YCOORD")),
+             crs = 2236,
+             remove = FALSE) %>%
+    st_transform(crs = st_crs(4326))
+  }
+
+select_wells <- wells %>%
+  st_filter(aoi %>%
+              st_transform(st_crs(wells))) #%>%
+    #dplyr::filter(grepl("VA2163315", `Well ID`, ignore.case = TRUE))
+
+# select_wells2 <- wells2 %>%
+#   st_filter(aoi %>%
+#               st_transform(st_crs(wells2)))
+
+
+ select_pods <- pods %>%
+   st_filter(aoi %>%
+               st_transform(st_crs(pods)))
+
+ select_pws <- pws %>%
+    st_filter(aoi %>%
+               st_transform(st_crs(pws)))
+
+
+c <- a + b +
+  mapview(select_wells,
+          col.regions = "dodgerblue",
+           cex = 5,
+          label = select_wells$'Subwatershed-Name') +
+  # mapview(select_wells2,
+  #         label = 'SWF Wells')
+  mapview(select_pods,
+          col.regions = "limegreen",
+          layer.name = "PODs",
+          cex = 3,
+          label = select_pods$WRNUM) +
+  mapview(select_pws,
+          col.regions = "lightpink",
+          layer.name = "PWS",
+          cex = 3,
+          label = select_pws$system_nam)
+
+
+c
+
+```
+
+There is an existing harmonized database for water rights (HarDWR) that can be useful for quickly finding water rights. Note, this was made about a year ago (and counting), so it is not guaranteed to be inclusive. But, it's a good first pass. I've included an example of Wyoming below, but see if you can figure out how to get the Nevada one loaded. Note, you might need to navigate to the folder on onedrive and unzip it manually first.
+
+
+
+For North Carolina
+```{r}
+# From irma datastore: https://irma.nps.gov/DataStore/Reference/Profile/1016845
+CAHA_wqgis_path <- "data/Water_Supply_Systems/data_sources/North_Carolina/caha_wqgis"
+CAHA_layers <- st_layers(CAHA_wqgis_path) # see all layers
+CAHA_dg <- st_read(CAHA_wqgis_path, layer = "idg_station", crs = 32618)
+mapview(CAHA_dg)
+```
+
+```{r}
+# From irma datastore: https://irma.nps.gov/DataStore/Reference/Profile/1016845
+CALO_wqgis_path <- "data/Water_Supply_Systems/data_sources/North_Carolina/calo_wqgis"
+CALO_layers <- st_layers(CALO_wqgis_path) # see all layers
+CALO_dg <- st_read(CALO_wqgis_path, layer = "idg_station", crs = 32618)
+mapview(CALO_dg)
+```
+
+For Florida
+```{r}
+#From irma datastore: https://irma.nps.gov/DataStore/Reference/Profile/1016832
+BICY_wqgis_path <- "data/Water_Supply_Systems/data_sources/Florida/bicy_wqgis"
+BICY_layers <- st_layers(BICY_wqgis_path) # see all layers
+BICY_dg <- st_read(BICY_wqgis_path, layer = "idg_station", crs = )
+mapview(BICY_dg)
+```
+
+For Utah
+```{r}
+#Locations of springs in the Zion Canyon Water System
+zion_springs <- read.csv("data/Water_Supply_Systems/data_sources/Utah/zion_springs.csv") %>%
+   st_as_sf(coords = (c("X","Y")), 
+           crs =  26912, #NAD83
+           remove = FALSE) %>%
+  st_transform(crs = st_crs(4326))
+
+d <- mapview(zion_springs,
+             layer.name = "Springs",
+             col.regions = "purple",
+             cex = 5)
+
+d
+```
+
+```{r}
+#Locations from water right 95-544 in CARE
+CARE_fremont_river <- tibble(
+  Site = c("Surface", "Underground"),
+  UTM_Easting = c(478431.726, 477534.7),
+  UTM_Northing = c(4237432.53, 4236775.991))
+
+CARE_fremont_river <- st_as_sf(CARE_fremont_river, 
+                          coords = c("UTM_Easting", "UTM_Northing"), 
+                          crs = 26912) %>%
+  st_transform(crs = st_crs(4326)) %>%
+  mutate(longitude = st_coordinates(.)[, 1], 
+         latitude = st_coordinates(.)[, 2]) 
+
+select_CARE <- CARE_fremont_river %>%
+  st_buffer(50)
+
+e <- mapview(CARE_fremont_river,
+             layer.name = "CARE",
+             col.regions = "purple",
+             cex = 9,
+             label = CARE_fremont_river$Site) +
+  mapview(select_CARE,
+          layer.name = "CARE Buffer",
+          col.regions = "lightpink")
+
+e
+```
+
+```{r}
+hardwr_utah <- st_read('data/all/HarDWR/stateWaterRightsRaw/UtahRights/UtahRights_Points_of_Diversion.shp')
+
+select_hardwr <- hardwr_utah %>%
+  st_transform(st_crs(aoi)) %>% .[aoi,]
+```
+
+
+```{r HarDWR}
+
+
+hardwr_wyoming <- read_csv("data/all/HarDWR/stateWaterRightsRaw/WyomingRights/Wyoming_HarDWR_Raw.csv") %>%
+  drop_na(c("lon","lat")) %>%
+  st_as_sf(., 
+           coords = (c("lon","lat")), 
+           crs = 4326,
+           remove = FALSE)
+
+
+```
+
+
+There is also a harmonized database of wells across the United States. Again, this is only as up to date as when the database was created. However, it might be useful for states where it is a challenge to find wells.  I've included some examples, but again, navigate to the directory using onedrive and explore if needed.
+
+```{r USGWD}
+
+wyoming_wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Wyoming.csv") %>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+
+
+texas_wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Texas.csv")%>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+
+newmexico_wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_New_Mexico.csv")%>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+
+
+colorado_wells <- read_csv("data/all/Water_Supply/USGWD-Tabular/USGWD_Colorado.csv")%>%
+  drop_na(c("Longitude","Latitude")) %>%
+  st_as_sf(., 
+           coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE)
+
+```
+
+
+Check coordinate system
+
+```{r}
+
+
+st_crs(pods)
+
+```
+  
