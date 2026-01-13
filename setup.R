@@ -30,7 +30,7 @@ packages <- c(
   "ggfortify",
   "ggpubr",
   "ggrepel",
-  "ggseas",
+  #"ggseas",
   "ggthemes",
   "gridExtra",
   "httr",
@@ -103,3 +103,4 @@ purrr::map(list.files(
   recursive = TRUE
 ),
 source)
+
