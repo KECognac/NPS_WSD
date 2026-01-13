@@ -1,0 +1,1033 @@
+---
+title: "Explore_WSD"
+author: "KEC"
+date: "2024-11-18"
+output: html_document
+---
+
+Load packages etc.
+
+```{r, echo = FALSE, message = FALSE}
+
+source("setup.R")
+
+pal <- list(
+  black = "black", 
+  gold = "#dca237", 
+  lightblue = "#6eb2e4", 
+  teal = "#459a74", 
+  yellow = "#eee461", 
+  darkblue = "#3070ad", 
+  orange = "#c66426", 
+  pink = "#c07da5",
+  lightpink = "#ECD8E4"
+)
+
+```
+
+
+Read in park shapefiles
+
+```{r parks, echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE}
+
+# Get park shapefile
+parks <- getParkSystem() %>% st_transform(4326)
+
+# And park centroid
+parks_centroid <- parks %>% 
+  st_centroid() %>%
+  mutate(
+    Longitude = st_coordinates(.)[, 1],
+    Latitude = st_coordinates(.)[, 2]
+  )
+
+```
+
+Read in and clean up the water supply database for plotting
+
+```{r, echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE}
+
+# WSD Path
+wsd_path <- "data/Water_Supply_Systems/NPS_Water_Systems_Database_Joined.xlsx"
+
+# Read in the WSD
+full_table <- read_excel(wsd_path, sheet = 1, na = c("NA","U"), skip = 1) %>%
+  janitor::clean_names() %>%
+  dplyr::mutate(well_depth = as.numeric(well_depth),
+                source_longitude = as.numeric(source_longitude),
+                source_latitude = as.numeric(source_latitude)) %>%
+  left_join(parks_centroid %>% dplyr::select(UNIT_CODE, Latitude, Longitude),
+            by = c("park_unit" = "UNIT_CODE")) %>%
+  dplyr::mutate(
+    Longitude = ifelse(is.na(source_longitude), Longitude, source_longitude),
+    Latitude = ifelse(is.na(source_latitude), Latitude, source_latitude)
+  )
+
+
+# Filter only active systems
+active_table <- full_table %>%
+  dplyr::filter(active == "yes")
+
+source_table <- full_table %>%
+  drop_na(c(source_longitude,source_latitude)) %>%
+  st_as_sf(coords = (c("Longitude","Latitude")), 
+           crs = 4326,
+           remove = FALSE) 
+
+# Clean the database for plotting by grouping some source types into broader categories
+source_table_clean <- source_table %>%
+  dplyr::mutate(source_type = 
+                 case_when(#source_type == "deep groundwater" ~ "Groundwater (Deep)",
+                            #source_type == "unknown groundwater" ~ "Groundwater (Unknown)",
+                            #source_type %in% c("shallow groundwater", "Shallow Groundwater") ~ "Groundwater (Shallow)",
+                   grepl("groundwater", source_type, ignore.case = TRUE) ~ "Groundwater",
+                   #source_type %in% c("Deep Groundwater", "Shallow Groundwater", "Unknown Groundwater") ~ "Groundwater",
+                            source_type %in% c("river/stream", "lake", "lake/reservoir") ~ "Surface Water",
+                        source_type %in% c("municipal","purchased/concessioner") ~ "Municipal",
+                      source_type == "hauled" ~ "Hauled",
+                   source_type == "ocean" ~ "Ocean",
+                   source_type == "rainwater" ~ "Rainwater",
+                   source_type == "reclaimed" ~ "Reclaimed",
+                   source_type == "spring" ~ "Spring",
+                TRUE ~ source_type)) 
+
+
+```
+
+
+```{r WSD_stats}
+# Print some basic stats
+
+print(paste0("Number of total water supply systems: ",
+      (full_table %>% distinct(wsd_system_id) %>% nrow())))
+
+print(paste0("Number of active water supply systems: ",
+      (active_table %>% distinct(wsd_system_id) %>% nrow())))
+
+print(paste0("Number of active water sources: ",
+      (active_table %>% distinct(wsd_source_id) %>% nrow())))
+
+print(paste0("Number of active water sources: ",
+      (source_table %>% distinct(wsd_source_id) %>% nrow())))
+
+
+stats <- source_table_clean %>%
+  dplyr::select(region, "Source Type" = source_type) %>%
+  ungroup() %>%
+  st_drop_geometry() %>%
+  #dplyr::group_by(region) %>%
+  dplyr::mutate(n = n()) %>%
+  #dplyr::group_by(region, source_type) %>%
+  dplyr::group_by(`Source Type`) %>%
+  dplyr::summarize("Total Count" = mean(n),
+                   "Group Count" = n()) %>%
+  dplyr::mutate(Percentage = round(100*`Group Count`/`Total Count`,2)) %>%
+  dplyr::select(-`Total Count`)
+
+
+kable(stats) %>%
+  kable_paper() %>%
+  kable_styling(font_size = 24, position = "left")
+
+```
+
+
+
+```{r preview_WSD}
+
+# Preview
+mapview(parks %>% dplyr::select(UNIT_CODE, UNIT_NAME, REGION), 
+        col.regions = "seagreen",
+        layer.name = "PARKS") +
+mapview(source_table_clean,
+        zcol = "source_type",
+        layer.name = "Water Sources",
+        cex = 4)
+
+```
+
+
+# Create a pie chart of all water supply sources - even those without coordinates
+
+```{r all_pie}
+
+# Prep data
+source_pie <- source_table %>%
+  dplyr::mutate(source_type = 
+                 case_when(#source_type == "deep groundwater" ~ "Groundwater (Deep)",
+                            #source_type == "unknown groundwater" ~ "Groundwater (Unknown)",
+                            #source_type %in% c("shallow groundwater", "Shallow Groundwater") ~ "Groundwater (Shallow)",
+                   grepl("groundwater", source_type, ignore.case = TRUE) ~ "Groundwater",
+                   #source_type %in% c("Deep Groundwater", "Shallow Groundwater", "Unknown Groundwater") ~ "Groundwater",
+                            source_type %in% c("river/stream", "lake", "lake/reservoir") ~ "Surface Water",
+                        source_type %in% c("municipal","purchased/concessioner") ~ "Municipal",
+                      source_type == "hauled" ~ "Hauled",
+                   source_type == "ocean" ~ "Ocean",
+                   source_type == "rainwater" ~ "Rainwater",
+                   source_type == "reclaimed" ~ "Reclaimed",
+                   source_type == "spring" ~ "Spring",
+                TRUE ~ source_type)) %>%
+ #dplyr::group_by(region) %>%
+  # Count the number of occurrences for each category
+  count(source_type) %>%
+ # dplyr::group_by(region) %>%
+  mutate(fraction = n / sum(n),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, -1)),
+    label = paste0(round(fraction * 100, 1), "%")
+  ) %>% st_drop_geometry()
+
+
+# VERSION WITH CALLOUT NUMBERS
+
+# 1. Setup the color palette (unchanged)
+pal <- colorRampPalette(c("tomato", "pink", "darkblue","#0072B2", "#009E73", "yellow3"))
+
+# 2. Add New Columns for Label and Segment Positioning
+# You must first calculate the center angle (label_y) for each slice.
+# We'll calculate a final X position (outer_x) for the text and segment.
+source_pie <- source_pie %>%
+  dplyr::mutate(
+    # Calculate the mid-point of the angle for the label and segment (radial position)
+    label_y = (ymin + ymax) / 2,
+    
+    # Define the outer x-position for the segment and text.
+    # The inner x-position of the segment will be 4 (the outer edge of the donut).
+    outer_x = 4.5 # This pushes the label slightly outside the donut (4.5 vs 4.0)
+  )
+
+# 3. The New Plot Code with External Labels and Segments
+ggplot(source_pie, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = source_type)) +
+  
+  # 1. Draw the Donut/Pie Sections (unchanged)
+  geom_rect() +
+  
+  # 2. Add Connector Lines (geom_segment)
+  geom_segment(
+    # Start the segment at the outer edge of the donut (x=4)
+    # End the segment at the defined outer_x (x=4.5)
+    aes(x = 4, xend = outer_x, y = label_y, yend = label_y),
+    color = "black", 
+    linewidth = 0.5
+  ) +
+  
+  # 3. Add External Text Labels (geom_text)
+  geom_text(
+    # Place the label at the end of the segment
+    aes(x = outer_x + 0.1, y = label_y, label = label), # Shift text slightly past the segment end
+    size = 3,
+    # Adjust horizontal alignment to handle labels on both sides of the facet
+    hjust = 0 # Left-align the text to keep it from overlapping itself
+  ) +
+  
+  # 4. Transform to Polar Coordinates (unchanged)
+  coord_polar(theta = "y") +
+  
+  # 5. Customize the Theme, Labels, and Colors (unchanged)
+  theme_void() +
+  labs(fill = "Water Supply Type") +
+  #facet_wrap(~region, nrow = 2) +
+  scale_fill_manual("", values = pal(8))
+
+```
+
+
+# Create a pie chart by region
+
+```{r regional_pie}
+
+# Prep data
+source_pie <- source_table %>%
+  dplyr::mutate(source_type = 
+                 case_when(#source_type == "deep groundwater" ~ "Groundwater (Deep)",
+                            #source_type == "unknown groundwater" ~ "Groundwater (Unknown)",
+                            #source_type %in% c("shallow groundwater", "Shallow Groundwater") ~ "Groundwater (Shallow)",
+                   grepl("groundwater", source_type, ignore.case = TRUE) ~ "Groundwater",
+                   #source_type %in% c("Deep Groundwater", "Shallow Groundwater", "Unknown Groundwater") ~ "Groundwater",
+                            source_type %in% c("river/stream", "lake", "lake/reservoir") ~ "Surface Water",
+                        source_type %in% c("municipal","purchased/concessioner") ~ "Municipal",
+                      source_type == "hauled" ~ "Hauled",
+                   source_type == "ocean" ~ "Ocean",
+                   source_type == "rainwater" ~ "Rainwater",
+                   source_type == "reclaimed" ~ "Reclaimed",
+                   source_type == "spring" ~ "Spring",
+                TRUE ~ source_type)) %>%
+ dplyr::group_by(region) %>%
+  # Count the number of occurrences for each category
+  count(source_type) %>%
+  dplyr::group_by(region) %>%
+  mutate(fraction = n / sum(n),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, -1)),
+    label = paste0(round(fraction * 100, 1), "%")
+  ) %>% st_drop_geometry()
+
+
+# VERSION WITH CALLOUT NUMBERS
+
+# 1. Setup the color palette (unchanged)
+pal <- colorRampPalette(c("tomato", "pink", "darkblue","#0072B2", "#009E73", "yellow3"))
+
+# 2. Add New Columns for Label and Segment Positioning
+# You must first calculate the center angle (label_y) for each slice.
+# We'll calculate a final X position (outer_x) for the text and segment.
+source_pie <- source_pie %>%
+  dplyr::mutate(
+    # Calculate the mid-point of the angle for the label and segment (radial position)
+    label_y = (ymin + ymax) / 2,
+    
+    # Define the outer x-position for the segment and text.
+    # The inner x-position of the segment will be 4 (the outer edge of the donut).
+    outer_x = 4.5 # This pushes the label slightly outside the donut (4.5 vs 4.0)
+  )
+
+# 3. The New Plot Code with External Labels and Segments
+ggplot(source_pie, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = source_type)) +
+  
+  # 1. Draw the Donut/Pie Sections (unchanged)
+  geom_rect() +
+  
+  # 2. Add Connector Lines (geom_segment)
+  geom_segment(
+    # Start the segment at the outer edge of the donut (x=4)
+    # End the segment at the defined outer_x (x=4.5)
+    aes(x = 4, xend = outer_x, y = label_y, yend = label_y),
+    color = "black", 
+    linewidth = 0.5
+  ) +
+  
+  # 3. Add External Text Labels (geom_text)
+  geom_text(
+    # Place the label at the end of the segment
+    aes(x = outer_x + 0.1, y = label_y, label = label), # Shift text slightly past the segment end
+    size = 3,
+    # Adjust horizontal alignment to handle labels on both sides of the facet
+    hjust = 0 # Left-align the text to keep it from overlapping itself
+  ) +
+  
+  # 4. Transform to Polar Coordinates (unchanged)
+  coord_polar(theta = "y") +
+  
+  # 5. Customize the Theme, Labels, and Colors (unchanged)
+  theme_void() +
+  labs(fill = "Water Supply Type") +
+  facet_wrap(~region, nrow = 2) +
+  scale_fill_manual("", values = pal(8))
+
+
+
+
+# VERSION WITHOUT CALLOUT NUMBERS
+
+pal <- colorRampPalette(c("tomato", "pink", "darkblue","#0072B2", "#009E73", "yellow3"))
+
+ggplot(source_pie, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, 
+      fill = source_type)) +
+  geom_rect() +
+  # 5. Add text labels to the middle of each wedge
+  geom_text(
+    x = (3 + 4) / 2, # Place the label in the middle of the donut
+    aes(y = (ymin + ymax) / 2, label = label),
+    size = 3
+  ) +
+  # 6. Transform the Cartesian coordinates to polar coordinates
+  coord_polar(theta = "y") +
+  # 7. Customize the theme, labels, and colors
+  theme_void() + # A minimalist theme with no axes or gridlines
+  labs(fill = "Water Supply Type") +
+  facet_wrap(~region) +
+  scale_fill_manual("", values = pal(8))
+
+```
+
+
+Plot all park boundaries and water supply points
+```{r}
+
+a <-
+  mapview(parks,
+          col.regions = "seagreen",
+          alpha.regions = 0.3,
+          layer.name = "Park Boundaries") +
+  mapview(source_table,
+        zcol = "source_type",
+        cex = 4,
+        layer.name = "Source Type") 
+
+
+# Option to add labels
+
+#  addStaticLabels(a,
+#                        label = parks$UNIT_CODE,
+#                  noHide = TRUE,
+#                  direction = 'right',
+#                  textOnly = TRUE,
+#                  textsize = "12px",
+#                  style = list("color" = "black", "font-weight" = "bold"))
+  
+```
+
+
+
+By State
+
+IMR: "AZ" "CO"  "MT" "NM" "OK" "TX" "UT" "WY" 
+PWR: "CA" "HI" "ID" "NV" "GU" "OR" "WA" "MP" "AS"
+AKR: "AK"
+
+```{r state}
+
+select_state <- "HI"
+
+state_source <- source_table %>%
+  ungroup() %>%
+  dplyr::filter(state == select_state)
+
+state_boundaries <- parks %>% 
+            dplyr::filter(STATE == select_state)
+
+
+b <-
+  mapview(state_boundaries,
+          col.regions = "seagreen",
+          alpha.regions = 0.3,
+          layer.name = "Park Boundaries") +
+  mapview(state_source,
+        zcol = "source_type",
+        cex = 4,
+        layer.name = "Source Type") 
+
+  addStaticLabels(b,
+                  label = state_boundaries$UNIT_CODE,
+                  noHide = TRUE,
+                  direction = 'right',
+                  textOnly = TRUE,
+                  textsize = "15px",
+                  style = list("color" = "black", "font-weight" = "bold"))
+
+
+
+```
+
+
+USGWD
+
+Read in USGWD for a state and plot
+```{r USGWD}
+
+USGWD <- list.files(path = "data/all/Water_Supply/USGWD-Tabular/", pattern = "*.csv", full.names = TRUE) %>%
+  as_tibble() %>% # Convert to a tibble
+  dplyr::filter(str_detect(value, paste(c("North_Carolina"), collapse = "|"))) %>%
+  pull(value) %>%
+  as.list() %>%
+  map_dfr(., \(x) fread(x) %>% clean_names() %>% dplyr::mutate(well_id_state = as.character(well_id_state))) %>%
+  drop_na(longitude) %>%
+  st_as_sf(coords = (c("longitude","latitude")), 
+           crs = 4326,
+           remove = FALSE) 
+
+#mapview(buildings %>% st_centroid(), col.regions = "green") +
+mapview(USGWD %>%
+          st_filter(source_table %>% st_buffer(10000))) +
+  mapview(source_table, col.regions = "red") +
+  mapview(dg, col.regions = "hotpink")
+  
+
+
+```
+
+# Test to plot using NPS Basemaps - hard to work with in R as of now
+
+```{r}
+library("leaflet")
+
+pal <- colorFactor(
+  palette = "Dark2",
+  domain = source_table_clean$source_type
+)
+
+
+# NPS Park Tiles for map background:
+tileURL  <- "https://atlas-stg.geoplatform.gov/styles/v1/atlas-user/ck58pyquo009v01p99xebegr9/tiles/256/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiYXRsYXMtdXNlciIsImEiOiJjazFmdGx2bjQwMDAwMG5wZmYwbmJwbmE2In0.lWXK2UexpXuyVitesLdwUg&"
+tile_attribution <- '"NPS"'
+#park_boundary <- getParkBoundary()
+
+pt <- st_centroid(parks %>% dplyr::filter(STATE == "NE")) %>%
+  st_coordinates()
+
+#bounds <- st_bbox(parks %>% st_buffer(5000))
+
+test_map <- leaflet::leaflet() %>%
+  leaflet::addTiles(urlTemplate = tileURL) %>%
+  leaflet::setView(lat = pt[[1,2]], pt[[1,1]], zoom = 3) %>%
+  #leaflet::fitBounds(lng1 = west, lat1 = south, lng2 = east, lat2 = north) %>%
+  addScaleBar(position = c("bottomright"),
+              options = scaleBarOptions(updateWhenIdle = FALSE)) %>%
+  #leaflet::addCircleMarkers()
+  # addPolygons(data = alluvium, # Use addPolygons() for polygons
+  #            color = "yellow", # Set the border color
+  #            weight = 2, # Set the border weight
+  #            fillColor = "yellow", # Set the fill color
+  #            fillOpacity = 0.3) %>% # Set the fill opacity) %>%
+  addCircleMarkers(
+    data = source_table_clean,
+    # Use the column names directly without the '$' when 'data' is specified
+    lng = ~source_longitude,
+    lat = ~source_latitude,
+    color = "black", # Sets the border color
+    fillColor = ~pal(source_type), # Sets the fill color
+    fillOpacity = 0.7, # Make the markers slightly transparent
+    stroke = FALSE, # Ensure the border color is visible
+    radius = 5, # Increased radius slightly so color is more visible
+    group = ~source_type # Still good practice to group for layer control
+  ) %>%
+  
+  # 4. Add a Legend (Crucial for explaining the colors)
+  addLegend(
+    pal = pal,
+    values = source_table_clean$source_type,
+    title = "Source Type",
+    opacity = 1
+  )
+
+test_map
+ 
+
+
+```
+
+
+```{r}
+
+park <- "SLBE"
+park_boundary <- getParkBoundary(park)
+
+wells <- st_read("data/Water_Supply_Systems/data_sources/Michigan/state_wells/Michigan_Wellogic_Wells.shp")
+
+sel_wells <- wells %>%
+  st_intersection(park_boundary %>% st_transform(crs = 3857)) %>%
+  dplyr::filter(grepl("National", OWNER_NAME, ignore.case = TRUE))
+
+mapview(sel_wells)
+
+src <- source_table %>% dplyr::filter(park_unit == "PIRO")
+
+
+```
+
+
+```{r rest}
+
+get_rest <- function(map_server_url, layer_id = 0) {
+  
+#  map_server_url <- "https://gis.ohiodnr.gov/arcgis/rest/services/DGS_Services/Ohio_Water_Wells/FeatureServer/1"
+
+# Construct the URL for the 'query' endpoint, requesting GeoJSON output
+# 'where=1=1' means select all features
+# 'outFields=*' means include all attributes
+# 'returnGeometry=true' means include the spatial geometry
+# 'f=geojson' is crucial to tell the service to return data in GeoJSON format
+query_url <- paste0(
+  map_server_url, "/", layer_id,
+  "/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson"
+)
+
+# Download the data into an sf object
+# This might take some time depending on the size of the dataset
+# and your internet connection.
+rest_sf <- NULL # Initialize to NULL in case of error
+
+tryCatch({
+  rest_sf <- st_read(query_url)
+  message("\nData downloaded successfully!")
+  print(paste("Number of features:", nrow(rest_sf)))
+  print(paste("CRS:", st_crs(rest_sf)$input))
+}, error = function(e) {
+  message("\nError downloading data: ", e$message)
+  message("Please ensure the layer ID (e.g., /0, /1, etc.) is correct and the service is configured to return GeoJSON via the /query endpoint.")
+  message("You can try pasting the 'query_url' directly into your web browser to see the raw GeoJSON response.")
+})
+
+# You can then check if water_wells_sf is not NULL before proceeding
+if (!is.null(water_wells_sf) && nrow(water_wells_sf) > 0) {
+  message("\nSuccessfully loaded data.")
+  # You can now work with water_wells_sf
+  # Example: plot the first few wells
+  # plot(st_geometry(water_wells_sf[1:10,]))
+} else {
+  message("\nNo data was loaded.")
+}
+}
+
+```
+
+
+
+
+```{r coastal}
+
+# Get shapefile of US coastline
+coast <- coastline(year = 2024) %>%
+  st_transform(crs = st_crs(4326)) %>%
+  dplyr::summarize()
+
+# Get shapefile of national parks along coastlines
+coastal_parks <- parks %>%
+  #dplyr::filter(REGION %in% c("PW", "SE", "AK", "NC")) %>%
+  st_transform(crs = st_crs(4326)) %>%
+  dplyr::mutate(dist_to_coast = as.numeric(st_distance(., coast))) %>%
+  dplyr::filter(dist_to_coast <= 15000) 
+
+coastal_wsd <-  full_table %>%
+  dplyr::filter(park_unit %in% (coastal_parks$UNIT_CODE %>% unique()),
+                !region %in% c("Midwest Region", "Intermountain Region"),
+                park_unit != "MIIN") %>%
+  dplyr::mutate(source_type = 
+                  case_when(
+                    grepl("groundwater", source_type, ignore.case = TRUE) ~ "Groundwater",
+                    source_type %in% c("river/stream", "lake", "lake/reservoir") ~ "Surface Water",
+                    source_type %in% c("municipal","purchased/concessioner") ~ "Municipal",
+                    source_type == "hauled" ~ "Hauled",
+                    source_type == "ocean" ~ "Ocean",
+                    source_type == "rainwater" ~ "Rainwater",
+                    source_type == "reclaimed" ~ "Reclaimed",
+                    source_type == "spring" ~ "Spring",
+                    source_type == "tribal" ~ "Tribal",
+                    TRUE ~ source_type)) 
+
+
+coastal_wsd_geo <- coastal_wsd %>%
+drop_na(c(source_longitude,source_latitude)) %>%
+  st_as_sf(coords = (c("source_longitude","source_latitude")), 
+           crs = 4326,
+           remove = FALSE) #%>%
+# dplyr::mutate(dist_to_coast = as.numeric(st_distance(., coast))) %>%
+#   dplyr::filter(dist_to_coast <= 15000)
+
+
+mapview(parks, col.regions = "seagreen") +
+mapview(coastal_wsd_geo,
+        zcol = "source_type",
+        layer.name = "Water Sources")
+
+
+```
+
+```{r coastal_pie}
+
+# Prep data
+source_pie <- coastal_wsd %>%
+  count(source_type) %>%
+ # dplyr::group_by(region) %>%
+  mutate(fraction = n / sum(n),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, -1)),
+    label = paste0(round(fraction * 100, 1), "%")
+  ) %>% st_drop_geometry()
+
+
+# VERSION WITH CALLOUT NUMBERS
+
+# 1. Setup the color palette (unchanged)
+pal <- colorRampPalette(c("tomato", "pink", "darkblue","#0072B2", "#009E73", "yellow3"))
+
+# 2. Add New Columns for Label and Segment Positioning
+# You must first calculate the center angle (label_y) for each slice.
+# We'll calculate a final X position (outer_x) for the text and segment.
+source_pie <- source_pie %>%
+  dplyr::mutate(
+    # Calculate the mid-point of the angle for the label and segment (radial position)
+    label_y = (ymin + ymax) / 2,
+    
+    # Define the outer x-position for the segment and text.
+    # The inner x-position of the segment will be 4 (the outer edge of the donut).
+    outer_x = 4.5 # This pushes the label slightly outside the donut (4.5 vs 4.0)
+  )
+
+# 3. The New Plot Code with External Labels and Segments
+ggplot(source_pie, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = source_type)) +
+  
+  # 1. Draw the Donut/Pie Sections (unchanged)
+  geom_rect() +
+  
+  # 2. Add Connector Lines (geom_segment)
+  geom_segment(
+    # Start the segment at the outer edge of the donut (x=4)
+    # End the segment at the defined outer_x (x=4.5)
+    aes(x = 4, xend = outer_x, y = label_y, yend = label_y),
+    color = "black", 
+    linewidth = 0.5
+  ) +
+  
+  # 3. Add External Text Labels (geom_text)
+  geom_text(
+    # Place the label at the end of the segment
+    aes(x = outer_x + 0.1, y = label_y, label = label), # Shift text slightly past the segment end
+    size = 3,
+    # Adjust horizontal alignment to handle labels on both sides of the facet
+    hjust = 0 # Left-align the text to keep it from overlapping itself
+  ) +
+  
+  # 4. Transform to Polar Coordinates (unchanged)
+  coord_polar(theta = "y") +
+  
+  # 5. Customize the Theme, Labels, and Colors (unchanged)
+  theme_void() +
+  labs(fill = "Water Supply Type") +
+  #facet_wrap(~region, nrow = 2) +
+  scale_fill_manual("", values = pal(9))
+
+
+
+```
+
+
+
+```{r northeast}
+
+
+
+# Get shapefile of national parks along coastlines
+northeast_parks <- parks %>%
+  dplyr::filter(REGION %in% c("NE", "SE")) %>%
+  st_transform(crs = st_crs(4326)) %>%
+  dplyr::mutate(dist_to_coast = as.numeric(st_distance(., coast))) %>%
+  dplyr::filter(dist_to_coast >= 15000) 
+
+northeast_wsd <-  full_table %>%
+  dplyr::filter(park_unit %in% (northeast_parks$UNIT_CODE %>% unique())) %>%
+  dplyr::mutate(source_type = 
+                  case_when(
+                    grepl("groundwater", source_type, ignore.case = TRUE) ~ "Groundwater",
+                    source_type %in% c("river/stream", "lake", "lake/reservoir") ~ "Surface Water",
+                    source_type %in% c("municipal","purchased/concessioner") ~ "Municipal",
+                    source_type == "hauled" ~ "Hauled",
+                    source_type == "ocean" ~ "Ocean",
+                    source_type == "rainwater" ~ "Rainwater",
+                    source_type == "reclaimed" ~ "Reclaimed",
+                    source_type == "spring" ~ "Spring",
+                    source_type == "tribal" ~ "Tribal",
+                    TRUE ~ source_type)) 
+
+
+northeast_wsd_geo <- northeast_wsd %>%
+drop_na(c(source_longitude,source_latitude)) %>%
+  st_as_sf(coords = (c("source_longitude","source_latitude")), 
+           crs = 4326,
+           remove = FALSE) #%>%
+# dplyr::mutate(dist_to_coast = as.numeric(st_distance(., coast))) %>%
+#   dplyr::filter(dist_to_coast <= 15000)
+
+
+mapview(parks, col.regions = "seagreen") +
+mapview(northeast_wsd_geo,
+        zcol = "source_type",
+        layer.name = "Water Sources")
+
+
+```
+
+```{r northeast_pie}
+
+# Prep data
+source_pie <- northeast_wsd %>%
+  count(source_type) %>%
+ # dplyr::group_by(region) %>%
+  mutate(fraction = n / sum(n),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, -1)),
+    label = paste0(round(fraction * 100, 1), "%")
+  ) %>% st_drop_geometry()
+
+
+# VERSION WITH CALLOUT NUMBERS
+
+# 1. Setup the color palette (unchanged)
+pal <- colorRampPalette(c("tomato", "pink", "darkblue","#0072B2", "#009E73", "yellow3"))
+
+# 2. Add New Columns for Label and Segment Positioning
+# You must first calculate the center angle (label_y) for each slice.
+# We'll calculate a final X position (outer_x) for the text and segment.
+source_pie <- source_pie %>%
+  dplyr::mutate(
+    # Calculate the mid-point of the angle for the label and segment (radial position)
+    label_y = (ymin + ymax) / 2,
+    
+    # Define the outer x-position for the segment and text.
+    # The inner x-position of the segment will be 4 (the outer edge of the donut).
+    outer_x = 4.5 # This pushes the label slightly outside the donut (4.5 vs 4.0)
+  )
+
+# 3. The New Plot Code with External Labels and Segments
+ggplot(source_pie, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = source_type)) +
+  
+  # 1. Draw the Donut/Pie Sections (unchanged)
+  geom_rect() +
+  
+  # 2. Add Connector Lines (geom_segment)
+  geom_segment(
+    # Start the segment at the outer edge of the donut (x=4)
+    # End the segment at the defined outer_x (x=4.5)
+    aes(x = 4, xend = outer_x, y = label_y, yend = label_y),
+    color = "black", 
+    linewidth = 0.5
+  ) +
+  
+  # 3. Add External Text Labels (geom_text)
+  geom_text(
+    # Place the label at the end of the segment
+    aes(x = outer_x + 0.1, y = label_y, label = label), # Shift text slightly past the segment end
+    size = 3,
+    # Adjust horizontal alignment to handle labels on both sides of the facet
+    hjust = 0 # Left-align the text to keep it from overlapping itself
+  ) +
+  
+  # 4. Transform to Polar Coordinates (unchanged)
+  coord_polar(theta = "y") +
+  
+  # 5. Customize the Theme, Labels, and Colors (unchanged)
+  theme_void() +
+  labs(fill = "Water Supply Type") +
+  #facet_wrap(~region, nrow = 2) +
+  scale_fill_manual("", values = pal(9))
+
+
+
+```
+
+
+
+# Explore the colorado river basin
+```{r crb}
+
+# CRB Shapefile with service areas from:
+# https://coloradoriverbasin-lincolninstitute.hub.arcgis.com/search
+
+crb <- st_read("data/all/colorado_river_basin/Colorado_River_Basin_Hydrological_Boundaries_with_Areas_served_by_Colorado_River/Colorado_River_Basin_Hydrological_Boundaries_with_Areas_served_by_Colorado_River.shp") %>%
+  st_transform(crs = 4326) %>%
+  dplyr::mutate(group = ifelse(HU_6_Name %in% c("Upper Colorado",
+                                                "Lower Colorado"),
+                                                "Basins", "Service Areas"))
+
+# Create the buffered zone (e.g., 2000 meters buffer)
+crb_buffer <- crb %>%
+  st_buffer(dist = 2000) 
+
+# Get parks in CRB
+crb_parks <- parks %>%
+  st_transform(crs = 4326) %>%
+  st_filter(crb_buffer %>% dplyr::summarize(), .predicate = st_intersects) %>%
+  dplyr::mutate(
+    is_in_poly = st_within(geometry, crb %>% dplyr::summarize(), sparse = FALSE),
+    status = case_when(
+      is_in_poly ~ "basin",
+      TRUE ~ "buffer")) %>%
+  # Remove the temporary check column
+  dplyr::select(-is_in_poly)
+
+# Get WSD in CRB
+crb_wsd <- source_table %>%
+  st_filter(crb_buffer, .predicate = st_intersects) %>%
+  dplyr::mutate(
+    is_in_poly = st_within(geometry, crb %>% dplyr::summarize(), sparse = FALSE),
+    status = case_when(
+      is_in_poly ~ "basin",
+      TRUE ~ "buffer")) %>%
+  # Remove the temporary check column
+  dplyr::select(-is_in_poly) %>%
+  clean_names()
+
+# View
+mapview(crb_buffer,
+        zcol = "group",
+        alpha.regions = 0.1,
+        layer.name = NULL,
+        legend = FALSE,
+        lwd = 0) +
+mapview(crb,
+        zcol = "group",
+        alpha.regions = 0.3,
+        layer.name = "CRB Area") +
+  mapview(crb_wsd,
+          zcol = "source_type",
+          layer.name = "Source Type",
+          alpha.regions = 1,
+          cex = 6)
+
+# Export
+
+# Write CSV
+crb_wsd_export <- crb_wsd %>%
+#  st_transform(crs = 4326) %>% 
+#  mutate(
+#    source_longitude = st_coordinates(.)[, 1],
+#    source_latitude = st_coordinates(.)[, 2]) %>%
+  st_drop_geometry() 
+
+write_csv(
+  x = crb_wsd_export, 
+  file = "data/all/colorado_river_basin/crb_wsd.csv"
+)
+
+# Write shapefile
+
+# first fix some names b/c of arcgis
+old_names <- c(
+  "count_level_4_5_deficiencies",
+  "alternative_name",
+  "storage_capacity_gallons",
+  "open_interval_top",
+  "open_interval_bottom",
+  "open_interval_length"
+)
+
+new_names <- c(
+  "lev45def", 
+  "alt_name", 
+  "stor_cap_g", 
+  "opn_t", 
+  "opn_b", 
+  "opn_l"
+)
+
+crb_wsd_export <- crb_wsd
+
+# 2. Rename the columns using standard R assignment
+# Note: The geometry column remains untouched, but the attribute names are updated.
+names(crb_wsd_export)[names(crb_wsd_export) %in% old_names] <- new_names
+
+
+# 3. Now run your st_write command
+st_write(crb_wsd_export, dsn = "data/all/colorado_river_basin/crb_wsd.shp", package = "sf", delete_dsn = TRUE)
+
+#test <- st_read("data/all/colorado_river_basin/crb_wsd.shp")
+
+```
+
+
+
+```{r crb_pie}
+
+# Prep data
+source_pie <- crb_wsd %>%
+  count(source_type) %>%
+ # dplyr::group_by(region) %>%
+  mutate(fraction = n / sum(n),
+    ymax = cumsum(fraction),
+    ymin = c(0, head(ymax, -1)),
+    label = paste0(round(fraction * 100, 1), "%")
+  ) %>% st_drop_geometry()
+
+
+# VERSION WITH CALLOUT NUMBERS
+
+# 1. Setup the color palette (unchanged)
+pal <- colorRampPalette(c("tomato", "pink", "darkblue","#0072B2", "#009E73", "yellow3"))
+
+# 2. Add New Columns for Label and Segment Positioning
+# You must first calculate the center angle (label_y) for each slice.
+# We'll calculate a final X position (outer_x) for the text and segment.
+source_pie <- source_pie %>%
+  dplyr::mutate(
+    # Calculate the mid-point of the angle for the label and segment (radial position)
+    label_y = (ymin + ymax) / 2,
+    
+    # Define the outer x-position for the segment and text.
+    # The inner x-position of the segment will be 4 (the outer edge of the donut).
+    outer_x = 4.5 # This pushes the label slightly outside the donut (4.5 vs 4.0)
+  )
+
+# 3. The New Plot Code with External Labels and Segments
+ggplot(source_pie, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = source_type)) +
+  
+  # 1. Draw the Donut/Pie Sections (unchanged)
+  geom_rect() +
+  
+  # 2. Add Connector Lines (geom_segment)
+  geom_segment(
+    # Start the segment at the outer edge of the donut (x=4)
+    # End the segment at the defined outer_x (x=4.5)
+    aes(x = 4, xend = outer_x, y = label_y, yend = label_y),
+    color = "black", 
+    linewidth = 0.5
+  ) +
+  
+  # 3. Add External Text Labels (geom_text)
+  geom_text(
+    # Place the label at the end of the segment
+    aes(x = outer_x + 0.1, y = label_y, label = label), # Shift text slightly past the segment end
+    size = 3,
+    # Adjust horizontal alignment to handle labels on both sides of the facet
+    hjust = 0 # Left-align the text to keep it from overlapping itself
+  ) +
+  
+  # 4. Transform to Polar Coordinates (unchanged)
+  coord_polar(theta = "y") +
+  
+  # 5. Customize the Theme, Labels, and Colors (unchanged)
+  theme_void() +
+  labs(fill = "Water Supply Type") +
+  #facet_wrap(~region, nrow = 2) +
+  scale_fill_manual("", values = pal(11))
+
+
+
+```
+
+
+```{r IMR_parks_for_npf}
+
+imr_parks <- parks %>%
+  dplyr::filter(REGION == "IM")
+
+imr <- states() %>%
+  dplyr::filter(STUSPS %in% imr_parks$STATE)
+
+imr_all <- imr %>% dplyr::summarize()
+
+imr_ws <- source_table_clean %>%
+  dplyr::filter(region == "Intermountain Region") %>%
+  dplyr::filter(!source_type %in% c("Municipal", "Hauled"))
+
+pal <- colorRampPalette(c( "darkblue","tomato", "pink", "#009E73", "yellow3"))
+
+## Create map
+imr_map <-#
+  #tm_shape(tile_maps, bbox = st_bbox(park_boundary %>% st_buffer(5000))) +
+  #tm_rgb() +
+  tm_shape(imr) +
+  tm_polygons(
+    fill = "gray90", 
+              fill_alpha = 0.3, 
+              lwd = 0.5, 
+              fill.legend = tm_legend(show = TRUE, title = "")) +
+  tm_shape(imr_parks) +
+  tm_polygons(fill = "seagreen",
+              fill_alpha = 0.5,
+              lwd = 0,
+              fill.legend = tm_legend(show = TRUE)) +
+  tm_shape(imr_ws) +
+  tm_dots("source_type",
+          fill.scale = tm_scale_categorical(values = pal(5)),
+          size = 0.5,
+          fill_alpha = 0.4,
+          fill.legend = 
+            tm_legend(show = TRUE, 
+                      title = "IMR Systems", 
+                      title.size = 0.8)) +
+  tm_layout(
+    legend.position = c("right", "top"), 
+    legend.text.size = 0.8) +
+  tm_compass(position  =c(.9,.17), text.size = 0.8, ymod = 1) +
+
+    tm_scalebar(position = c("left", "bottom"), text.size = .8) 
+
+imr_map
+
+tmap_save(imr_map, 
+          dpi = 600, 
+          filename = "docs/NPF_LOI_DEC_2025/imr_systems.tiff", 
+          width = 4, 
+          height = 4)
+
+```
